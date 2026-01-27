@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'api',
     'rest_framework',
     'django_extensions'
+
 ]
 
 MIDDLEWARE = [
@@ -60,6 +61,20 @@ CORS_ALLOW_ORIGINS = [
     "http://localhost:5137",
     "http://127.0.0.1:5173",
 ]
+
+CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_METHODS = [
+    "DELETE",
+    "GET",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PUT",
+    "VIEW",
+]
+
+CSRF_TRUSTED_ORIGINS = ["https://localhost:5173", "https://127.0.0.1:5173"]
 
 ROOT_URLCONF = 'backend.urls'
 

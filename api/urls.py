@@ -10,6 +10,7 @@ router.register(r'memberships', MembershipViewSet)
 router.register(r'trainings', TrainingViewSet)
 router.register(r'payments', PaymentViewSet)
 router.register(r'reports', ReportViewSet, basename='reports')
+router.register(r'halls', HallViewSet)
 
 urlpatterns = [
     path('auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),

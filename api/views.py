@@ -14,17 +14,24 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework_simplejwt.views import TokenObtainPairView
+
 from .serializers import *
 from .permissions import IsStaffOrReadOnly
 
 class BaseViewSet(viewsets.ModelViewSet):
     permission_classes = [IsStaffOrReadOnly]
 
+class MTokenObtainPairView(TokenObtainPairView):
+    serializer_class = TokenObtainPairSerializer
 
 class TrainerListViewSet(BaseViewSet):
     queryset = Trainer.objects.all()
     serializer_class = TrainerSerializer
 
+class HallViewSet(BaseViewSet):
+    queryset = Hall.objects.all()
+    serializer_class = HallSerializer
 
 class ClientViewSet(BaseViewSet):
     queryset = Client.objects.all()

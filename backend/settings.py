@@ -39,10 +39,10 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'dbbackup',
+    'rest_framework',
+    'django_extensions',
     'corsheaders',
     'api',
-    'rest_framework',
-    'django_extensions'
 
 ]
 
@@ -74,7 +74,19 @@ CORS_ALLOW_METHODS = [
     "VIEW",
 ]
 
-CSRF_TRUSTED_ORIGINS = ["https://localhost:5173", "https://127.0.0.1:5173"]
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+CSRF_TRUSTED_ORIGINS = ["https://localhost:5173", "http://localhost:5173", "https://127.0.0.1:5173", "http://127.0.0.1:5173"]
 
 ROOT_URLCONF = 'backend.urls'
 

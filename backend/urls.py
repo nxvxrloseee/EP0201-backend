@@ -19,10 +19,10 @@ from django.urls import path, include
 from django.http import HttpResponse
 
 def home(request):
-    return HttpResponse("Backend is running. Go to <a href='/api/v1/'>API v1</a>")
+    return HttpResponse("Backend is running. Go to <a href='/api/'>API v1</a>")
 
 urlpatterns = [
     path('', home),
     path('admin/', admin.site.urls),
-    path('api/v1/', include('api.urls')),
+    path('api/', include('api.urls')),
 ]

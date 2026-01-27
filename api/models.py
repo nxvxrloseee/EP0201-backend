@@ -1,9 +1,8 @@
 from datetime import date
-
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 
-# Модель пользователя с ролевым доступом
 class User(AbstractUser):
     ROLE_CHOICES = [
         ('admin', 'Администратор'),
@@ -13,8 +12,11 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='admin')
     trainer = models.OneToOneField('Trainer', on_delete=models.SET_NULL, null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    def save(self, *args, **kwargs):
+        if self.pk is None or not self.password.statswith('pbkdf2_'):
+            self.set_password(self.password)
+            super().save(*args, **kwargs)
 
-# Тренеры
 class Trainer(models.Model):
     name = models.CharField(max_length=50)
     surname = models.CharField(max_length=50)
@@ -22,7 +24,9 @@ class Trainer(models.Model):
     specialization = models.CharField(max_length=100)
     phone = models.CharField(max_length=20, unique=True)
 
-# Клиенты
+    def __str__(self):
+        return f"{self.surname} {self.name}"
+
 class Client(models.Model):
     name = models.CharField(max_length=50)
     surname = models.CharField(max_length=50)
@@ -32,14 +36,16 @@ class Client(models.Model):
     birth_date = models.DateField()
     registration_date = models.DateField(auto_now_add=True)
 
-# Типы абонементов
 class MembershipType(models.Model):
     name = models.CharField(max_length=50)
     duration_days = models.IntegerField()
     price = models.DecimalField(max_digits=10, decimal_places=2)
     description = models.TextField(null=True, blank=True)
 
-# Абонементы клиентов
+    def clean(self):
+        if self.price < 0:
+            raise ValidationError('Цена не может быть отрицательной')
+
 class Membership(models.Model):
     STATUS_CHOICES = [('Активен', 'Активен'), ('Приостановлен', 'Приостановлен'), ('Истёк', 'Истёк')]
     client = models.ForeignKey(Client, on_delete=models.CASCADE)
@@ -47,18 +53,17 @@ class Membership(models.Model):
     start_date = models.DateField()
     end_date = models.DateField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+
     def save(self, *args, **kwargs):
-        if self.end_date<date.today():
+        if self.end_date < date.today():
             self.status = 'Истёк'
         super().save(*args, **kwargs)
 
-# Залы
 class Hall(models.Model):
     name = models.CharField(max_length=50, unique=True)
     capacity = models.IntegerField()
     equipment = models.TextField(null=True, blank=True)
 
-# Тренировки (Расписание)
 class Training(models.Model):
     STATUS_CHOICES = [('Запланирована', 'Запланирована'), ('Отменена', 'Отменена'), ('Завершена', 'Завершена')]
     trainer = models.ForeignKey(Trainer, on_delete=models.CASCADE)
@@ -68,15 +73,14 @@ class Training(models.Model):
     max_clients = models.IntegerField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES)
 
-# Посещаемость
 class Attendance(models.Model):
     STATUS_CHOICES = [('Записан', 'Записан'), ('Посетил', 'Посетил'), ('Отмена', 'Отмена'), ('Неявка', 'Неявка')]
     client = models.ForeignKey(Client, on_delete=models.CASCADE)
     training = models.ForeignKey(Training, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    is_present = models.BooleanField(default=False) # Добавлено для отчетов
     check_in_time = models.DateTimeField(null=True, blank=True)
 
-# Платежи
 class Payment(models.Model):
     TYPE_CHOICES = [('Наличные', 'Наличные'), ('Карта', 'Карта'), ('Перевод', 'Перевод')]
     client = models.ForeignKey(Client, on_delete=models.CASCADE)
@@ -85,3 +89,7 @@ class Payment(models.Model):
     payment_date = models.DateTimeField(auto_now_add=True)
     payment_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
     description = models.CharField(max_length=200, null=True, blank=True)
+
+    def clean(self):
+        if self.amount <= 0:
+            raise ValidationError('Сумма платежа должна быть больше нуля') # TC-PAY-02

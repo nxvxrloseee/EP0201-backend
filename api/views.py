@@ -1,119 +1,182 @@
 import os
+from datetime import timedelta
+from email import header
 from django.conf import settings
 from django.db.models import Sum, Count
 from django.http import HttpResponse
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .models import *
 from .serializers import *
-from .permissions import IsAdminOrManager
+from .permissions import IsStaffOrReadOnly
 
-class ClientViewSet(viewsets.ModelViewSet):
+class BaseViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsStaffOrReadOnly]
+
+
+class TrainerListViewSet(BaseViewSet):
+    queryset = Trainer.objects.all()
+    serializer_class = TrainerSerializer
+
+
+class ClientViewSet(BaseViewSet):
     queryset = Client.objects.all()
     serializer_class = ClientSerializer
-    permission_classes = [IsAdminOrManager] # Только админ и менеджер управляют клиентами
 
-class TrainingViewSet(viewsets.ModelViewSet):
+
+class MembershipViewSet(BaseViewSet):
+    queryset = Membership.objects.all()
+    serializer_class = MembershipSerializer
+
+
+class TrainingViewSet(BaseViewSet):
     queryset = Training.objects.all()
     serializer_class = TrainingSerializer
 
-    # Функция записи клиента на тренировку
     @action(detail=True, methods=['post'])
     def register_client(self, request, pk=None):
+        """Запись клиента на тренировку с проверкой вместимости (ТЗ 4.1)"""
         training = self.get_object()
         client_id = request.data.get('client_id')
 
-        # Проверка лимита мест
-        current_count = Attendance.objects.filter(training=training).count()
-        if current_count >= training.max_clients:
-            return Response({'error': 'Мест нет'}, status=status.HTTP_400_BAD_REQUEST)
+        if training.attendance_set.count() >= training.max_clients:
+            return Response({'error': 'Мест больше нет'}, status=status.HTTP_400_BAD_REQUEST)
 
-        Attendance.objects.create(client_id=client_id, training=training, status='Записан')
-        return Response({'status': 'Клиент записан'})
+        Attendance.objects.create(
+            client_id=client_id,
+            training=training,
+            status='Записан'
+        )
+        return Response({'status': 'Клиент записан'}, status=status.HTTP_201_CREATED)
 
 
-class PaymentViewSet(viewsets.ModelViewSet):
+class PaymentViewSet(BaseViewSet):
     queryset = Payment.objects.all()
     serializer_class = PaymentSerializer
 
-    # Отчет по доходам за период (для Руководителя)
-    @action(detail=False, methods=['get'])
-    def revenue_report(self, request):
-        start_date = request.query_params.get('start')
-        end_date = request.query_params.get('end')
-        total = Payment.objects.filter(payment_date__range=[start_date, end_date]).aggregate(models.Sum('amount'))
-        return Response({'total_revenue': total['amount__sum'] or 0})
-
-
-
-
-FONT_PATH = os.path.join(settings.BASE_DIR, 'static/fonts/dejavu-fonts-ttf-2.37/ttf/DejaVuSans.ttf')
-pdfmetrics.registerFont(TTFont('DejaVuSans', FONT_PATH))
-
 class ReportViewSet(viewsets.ViewSet):
-    queryset = Payment.objects.none()
+    """
+    ViewSet для генерации аналитических отчетов в формате PDF.
+    Соответствует требованиям ТЗ и Приложения А.
+    """
+    permission_classes = [IsAuthenticated, IsStaffOrReadOnly]
 
-    def _render_pdf_table(self, title, headers, data, total_label=None, total_val=None):
+    def _get_pdf_response(self, filename):
         response = HttpResponse(content_type='application/pdf')
-        response['Content-Disposition'] = f'attachment; filename="report.pdf"'
+        response['Content-Disposition'] = f'attachment; filename="{filename}.pdf"'
+        return response
 
+    def _setup_fonts(self):
+        # Путь к шрифтам на основе структуры вашего проекта
+        font_path = os.path.join(settings.BASE_DIR, 'static', 'fonts', 'dejavu-fonts-ttf-2.37', 'ttf', 'DejaVuSans.ttf')
+        pdfmetrics.registerFont(TTFont('DejaVuSans', font_path))
+
+    def _render_pdf_table(self, title, headers, data):
+        self._setup_fonts()
+        response = HttpResponse(content_type='application/pdf')
         doc = SimpleDocTemplate(response, pagesize=A4)
         elements = []
         styles = getSampleStyleSheet()
 
-        # Стиль для заголовка (кириллица)
-        title_style = ParagraphStyle(
-            'TitleStyle', parent=styles['Heading1'], fontName='DejaVu', alignment=1
-        )
+        # Настройка стиля заголовка
+        title_style = styles["Heading1"]
+        title_style.fontName = 'DejaVuSans'
         elements.append(Paragraph(title, title_style))
-        elements.append(Spacer(1, 20))
-
-        # Подготовка данных для таблицы
-        table_data = [headers] + data
-        if total_label:
-            table_data.append(['', total_label, total_val])
+        elements.append(Spacer(1, 12))
 
         # Создание таблицы
-        t = Table(table_data, colWidths=[150, 150, 100])
+        table_data = [headers] + data
+        t = Table(table_data)
         t.setStyle(TableStyle([
-            ('FONTNAME', (0,0), (-1,-1), 'DejaVu'), # Применяем русский шрифт ко всей таблице
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTNAME', (0, 0), (-1, -1), 'DejaVuSans'),
             ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
         ]))
-
         elements.append(t)
         doc.build(elements)
         return response
 
     @action(detail=False, methods=['get'])
-    def finance(self, request):
-        payments = Payment.objects.all()
-        total = payments.aggregate(total=Sum('amount'))['total'] or 0
+    def revenue(self, request):
+        """Финансовый отчёт (Рисунок 1 из Приложения А)"""
+        payments = Payment.objects.all().order_by('-payment_date')
+        total = payments.aggregate(Sum('amount'))['amount__sum'] or 0
 
-        headers = ['Дата', 'Клиент', 'Сумма (руб.)']
+        headers = ['Дата', 'Клиент', 'Тип оплаты', 'Сумма']
         data = [
-            [p.payment_date.strftime('%d.%m.%Y'), p.client.surname, str(p.amount)]
-            for p in payments
+            [
+                p.payment_date.strftime('%d.%m.%Y'),
+                f"{p.client.surname} {p.client.name[0]}.",
+                p.payment_type,
+                f"{p.amount} руб."
+            ] for p in payments
         ]
-
-        return self._render_pdf_table(
-            "ФИНАНСОВЫЙ ОТЧЕТ — ФИТНЕС-ЛАЙФ",
-            headers, data, "ИТОГО:", str(total)
-        )
+        data.append(['', '', 'ИТОГО:', f"{total} руб."])
+        return self._render_pdf_table("ФИНАНСОВЫЙ ОТЧЕТ", headers, data)
 
     @action(detail=False, methods=['get'])
     def attendance(self, request):
-        stats = Attendance.objects.filter(is_present=True).values('training__hall__name').annotate(count=Count('id'))
-        headers = ['Зал', 'Количество посещений', 'Статус']
-        data = [[s['training__hall__name'], str(s['count']), 'Норма'] for s in stats]
+        """Отчёт посещаемости (Рисунок 2 из Приложения А)"""
+        # Фильтруем только тех, кто реально пришел (is_present=True)
+        attendances = Attendance.objects.filter(is_present=True).select_related('client', 'training')
+
+        headers = ['Дата', 'Клиент', 'Тренировка', 'Статус']
+        data = [
+            [
+                a.training.date_time.strftime('%d.%m.%Y'),
+                f"{a.client.surname} {a.client.name}",
+                a.training.training_type.name,
+                "Посетил"
+            ] for a in attendances
+        ]
         return self._render_pdf_table("ОТЧЕТ ПОСЕЩАЕМОСТИ", headers, data)
+
+    @action(detail=False, methods=['get'])
+    def trainer_performance(self, request):
+        """Отчёт о работе тренеров (Рисунок 3 из Приложения А)"""
+        stats = Training.objects.values('trainer__surname', 'trainer__name').annotate(
+            total_trainings=Count('id', distinct=True),
+            total_clients=Count('attendance')
+        ).order_by('-total_trainings')
+
+        headers = ['Тренер', 'Проведено занятий', 'Всего клиентов (записей)']
+        data = [
+            [
+                f"{s['trainer__surname']} {s['trainer__name']}",
+                str(s['total_trainings']),
+                str(s['total_clients'])
+            ] for s in stats
+        ]
+        return self._render_pdf_table("ЭФФЕКТИВНОСТЬ ТРЕНЕРОВ", headers, data)
+
+    @action(detail=False, methods=['get'])
+    def expiring_memberships(self, request):
+        """Список клиентов с истекающим абонементом (Рисунок 4 из Приложения А)"""
+        today = date.today()
+        threshold = today + timedelta(days=7)  # Берем интервал в неделю
+
+        memberships = Membership.objects.filter(
+            end_date__range=[today, threshold],
+            status='Активен'
+        ).select_related('client', 'type')
+
+        headers = ['Клиент', 'Телефон', 'Тип абонемента', 'Дата окончания']
+        data = [
+            [
+                f"{m.client.surname} {m.client.name}",
+                m.client.phone,
+                m.type.name,
+                m.end_date.strftime('%d.%m.%Y')
+            ] for m in memberships
+        ]
+        return self._render_pdf_table("ИСТЕКАЮЩИЕ АБОНЕМЕНТЫ (ближайшие 7 дней)", header, data)

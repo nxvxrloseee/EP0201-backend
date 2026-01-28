@@ -16,9 +16,8 @@ urlpatterns = [
     path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('', include(router.urls)),
 
-# Отчёты (НЕ через ViewSet!)
     path('reports/revenue/', revenue_report, name='revenue_report'),
     path('reports/attendance/', attendance_report, name='attendance_report'),
-    path('reports/trainer_performance/', trainer_performance_report, name='trainer_performance'),
+    path('reports/trainer_performance/', trainer_performance_report, name='trainer_performance_report'),
     path('reports/expiring_memberships/', expiring_memberships_report, name='expiring_memberships'),
 ]

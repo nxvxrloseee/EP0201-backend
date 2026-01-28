@@ -1,12 +1,27 @@
 from io import BytesIO
-from datetime import date, timedelta
-from django.http import HttpResponse
+from datetime import timedelta
+from django.http import FileResponse, JsonResponse
 from django.conf import settings
 from rest_framework import viewsets, status
-from rest_framework.decorators import action, permission_classes, api_view
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.exceptions import AuthenticationFailed
+
+from backend.settings import FONTS_DIR
+
+
+def jwt_authenticate(request):
+    jwt_auth = JWTAuthentication()
+    user_auth_tuple = jwt_auth.authenticate(request)
+
+    if user_auth_tuple is None:
+        raise AuthenticationFailed('Authentication credentials were not provided.')
+
+    user, token = user_auth_tuple
+    request.user = user
+    return user
 
 # Импорт ReportLab
 try:
@@ -33,17 +48,14 @@ try:
             FONT_NAME = 'DejaVuSans'
             FONT_NAME_BOLD = 'DejaVuSans-Bold'
         else:
-            FONT_NAME = 'Helvetica'
-            FONT_NAME_BOLD = 'Helvetica-Bold'
+            pdfmetrics.registerFont(TTFont('DejaVuSans', os.path.join(FONTS_DIR, 'DejaVuSans.ttf')))
+            pdfmetrics.registerFont(TTFont('DejaVuSans-Bold', os.path.join(FONTS_DIR, 'DejaVuSans-Bold.ttf')))
+            pdfmetrics.registerFont(TTFont('DejaVuSans-Oblique', os.path.join(FONTS_DIR, 'DejaVuSans-Oblique.ttf')))
     except Exception as e:
         print(f"Ошибка загрузки шрифтов: {e}")
-        FONT_NAME = 'Helvetica'
-        FONT_NAME_BOLD = 'Helvetica-Bold'
 
 except ImportError:
     REPORTLAB_AVAILABLE = False
-    FONT_NAME = 'Helvetica'
-    FONT_NAME_BOLD = 'Helvetica-Bold'
 
 from .serializers import *
 from .permissions import IsStaffOrReadOnly
@@ -104,10 +116,8 @@ class PaymentViewSet(BaseViewSet):
 
 
 def get_custom_styles():
-    """Создание кастомных стилей для PDF"""
     styles = getSampleStyleSheet()
 
-    # Стиль для главного заголовка
     styles.add(ParagraphStyle(
         name='CustomTitle',
         parent=styles['Heading1'],
@@ -119,7 +129,6 @@ def get_custom_styles():
         leading=28
     ))
 
-    # Стиль для подзаголовка
     styles.add(ParagraphStyle(
         name='CustomSubtitle',
         parent=styles['Normal'],
@@ -130,7 +139,6 @@ def get_custom_styles():
         alignment=TA_CENTER
     ))
 
-    # Стиль для секций
     styles.add(ParagraphStyle(
         name='SectionHeader',
         parent=styles['Heading2'],
@@ -142,7 +150,6 @@ def get_custom_styles():
         leading=16
     ))
 
-    # Стиль для summary блока
     styles.add(ParagraphStyle(
         name='SummaryText',
         parent=styles['Normal'],
@@ -154,7 +161,6 @@ def get_custom_styles():
         leading=14
     ))
 
-    # Стиль для обычного текста
     styles.add(ParagraphStyle(
         name='CustomNormal',
         parent=styles['Normal'],
@@ -167,14 +173,8 @@ def get_custom_styles():
 
 
 def create_report_header(elements, title, subtitle, styles):
-    """Создание заголовка отчета"""
-    # Заголовок
     elements.append(Paragraph(title, styles['CustomTitle']))
-
-    # Подзаголовок с датой
     elements.append(Paragraph(subtitle, styles['CustomSubtitle']))
-
-    # Разделительная линия
     elements.append(HRFlowable(
         width="100%",
         thickness=2,
@@ -185,195 +185,132 @@ def create_report_header(elements, title, subtitle, styles):
 
 
 def create_summary_box(elements, summary_items, styles):
-    """Создание блока с итоговой информацией"""
-    # Создаем таблицу для summary
-    summary_data = []
+    data = []
     for item in summary_items:
-        summary_data.append([
+        data.append([
             Paragraph(f"<b>{item['label']}:</b>", styles['SummaryText']),
             Paragraph(str(item['value']), styles['SummaryText'])
         ])
 
-    summary_table = Table(summary_data, colWidths=[8 * cm, 8 * cm])
-    summary_table.setStyle(TableStyle([
+    table = Table(data, colWidths=[8 * cm, 8 * cm])
+    table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#ecf0f1')),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#bdc3c7')),
         ('LEFTPADDING', (0, 0), (-1, -1), 15),
         ('RIGHTPADDING', (0, 0), (-1, -1), 15),
         ('TOPPADDING', (0, 0), (-1, -1), 10),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#bdc3c7'))
     ]))
 
-    elements.append(summary_table)
+    elements.append(table)
     elements.append(Spacer(1, 0.5 * cm))
 
 
-def create_data_table(headers, data_rows, col_widths=None):
-    """Создание таблицы с данными"""
-    # Формируем данные таблицы
-    table_data = [headers] + data_rows
-
-    # Создаем таблицу
-    if col_widths:
-        table = Table(table_data, colWidths=col_widths, repeatRows=1)
-    else:
-        table = Table(table_data, repeatRows=1)
-
-    # Применяем стили
+def create_data_table(headers, rows, col_widths):
+    table = Table([headers] + rows, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([
-        # Заголовок
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#34495e')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
         ('FONTNAME', (0, 0), (-1, 0), FONT_NAME_BOLD),
-        ('FONTSIZE', (0, 0), (-1, 0), 11),
-        ('TOPPADDING', (0, 0), (-1, 0), 12),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-
-        # Содержимое
-        ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-        ('FONTNAME', (0, 1), (-1, -1), FONT_NAME),
-        ('FONTSIZE', (0, 1), (-1, -1), 9),
-        ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 1), (-1, -1), 8),
-        ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-
-        # Чередующиеся строки
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
-
-        # Границы
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#bdc3c7')),
-        ('LINEBELOW', (0, 0), (-1, 0), 2, colors.HexColor('#34495e')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [
+            colors.white, colors.HexColor('#f8f9fa')
+        ]),
     ]))
-
     return table
 
 
-def create_pdf_document(title, subtitle, summary_items, headers, data_rows, col_widths=None):
-    """
-    Универсальная функция для создания PDF отчетов
-    """
-    if not REPORTLAB_AVAILABLE:
-        raise ImportError("ReportLab не установлен")
-
+def create_pdf_document(title, subtitle, summary, headers, rows, col_widths):
     buffer = BytesIO()
+
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        rightMargin=1.5 * cm,
         leftMargin=1.5 * cm,
+        rightMargin=1.5 * cm,
         topMargin=2 * cm,
         bottomMargin=2 * cm,
         title=title
     )
 
-    elements = []
     styles = get_custom_styles()
+    elements = []
 
-    # Заголовок отчета
     create_report_header(elements, title, subtitle, styles)
 
-    # Блок с итоговой информацией
-    if summary_items:
-        create_summary_box(elements, summary_items, styles)
+    if summary:
+        create_summary_box(elements, summary, styles)
 
-    # Секция с данными
     elements.append(Paragraph("Детализация", styles['SectionHeader']))
     elements.append(Spacer(1, 0.3 * cm))
 
-    # Таблица с данными
-    table = create_data_table(headers, data_rows, col_widths)
-    elements.append(table)
+    elements.append(create_data_table(headers, rows, col_widths))
 
-    # Футер
     elements.append(Spacer(1, 1 * cm))
-    footer_style = ParagraphStyle(
-        'Footer',
-        parent=styles['CustomNormal'],
-        fontSize=8,
-        textColor=colors.HexColor('#95a5a6'),
-        alignment=TA_CENTER
-    )
     elements.append(Paragraph(
-        f"Отчёт сформирован автоматически • Система управления фитнес-клубом • {date.today().strftime('%d.%m.%Y')}",
-        footer_style
+        f"Отчёт сформирован автоматически • {date.today().strftime('%d.%m.%Y')}",
+        ParagraphStyle(
+            'Footer',
+            parent=styles['CustomNormal'],
+            fontSize=8,
+            textColor=colors.HexColor('#95a5a6'),
+            alignment=TA_CENTER
+        )
     ))
 
-    # Генерируем PDF
     doc.build(elements)
     buffer.seek(0)
-
     return buffer
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
+
 def revenue_report(request):
-    """Финансовый отчёт"""
-    if not REPORTLAB_AVAILABLE:
-        return Response(
-            {'error': 'PDF библиотека не установлена. Установите: pip install reportlab'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
     try:
-        from .models import Payment
-
-        payments = Payment.objects.select_related('client').order_by('-payment_date')
-        total = sum(float(p.amount) for p in payments)
-
-        # Summary данные
-        summary_items = [
-            {'label': 'Общая выручка', 'value': f"{total:,.2f} ₽"},
-            {'label': 'Всего платежей', 'value': payments.count()}
-        ]
-
-        # Подготовка данных для таблицы
-        headers = ['Дата', 'Клиент', 'Сумма', 'Тип оплаты']
-        data_rows = []
-
-        for p in payments:
-            data_rows.append([
-                p.payment_date.strftime('%d.%m.%Y %H:%M'),
-                f"{p.client.surname} {p.client.name}",
-                f"{float(p.amount):,.2f} ₽",
-                p.payment_type
-            ])
-
-        # Ширина колонок
-        col_widths = [4 * cm, 5 * cm, 3 * cm, 4 * cm]
-
-        # Генерация PDF
-        pdf_buffer = create_pdf_document(
-            title="ФИНАНСОВЫЙ ОТЧЁТ",
-            subtitle=f"Период: все время • Дата формирования: {date.today().strftime('%d.%m.%Y')}",
-            summary_items=summary_items,
-            headers=headers,
-            data_rows=data_rows,
-            col_widths=col_widths
-        )
-
-        response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
-        response['Content-Disposition'] = 'attachment; filename="revenue_report.pdf"'
-        return response
-
+        user = jwt_authenticate(request)
     except Exception as e:
-        import traceback
-        error_detail = traceback.format_exc()
-        print(f"Ошибка генерации PDF: {error_detail}")
-        return Response(
-            {'error': f'Ошибка генерации PDF: {str(e)}'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        return JsonResponse({'error': str(e)}, status=401)
+    from .models import Payment
+
+    payments = Payment.objects.select_related('client').order_by('-payment_date')
+    total = sum(float(p.amount) for p in payments)
+
+    summary = [
+        {'label': 'Общая выручка', 'value': f"{total:,.2f} ₽"},
+        {'label': 'Всего платежей', 'value': payments.count()}
+    ]
+
+    headers = ['Дата', 'Клиент', 'Сумма', 'Тип оплаты']
+    rows = [[
+        p.payment_date.strftime('%d.%m.%Y %H:%M'),
+        f"{p.client.surname} {p.client.name}",
+        f"{float(p.amount):,.2f} ₽",
+        p.payment_type
+    ] for p in payments]
+
+    pdf = create_pdf_document(
+        title="ФИНАНСОВЫЙ ОТЧЁТ",
+        subtitle=f"Дата формирования: {date.today().strftime('%d.%m.%Y')}",
+        summary=summary,
+        headers=headers,
+        rows=rows,
+        col_widths=[4 * cm, 5 * cm, 3 * cm, 4 * cm]
+    )
+
+    return FileResponse(
+        pdf,
+        as_attachment=True,
+        filename='revenue_report.pdf',
+        content_type='application/pdf'
+    )
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
+
 def attendance_report(request):
+    try:
+        user = jwt_authenticate(request)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=401)
     """Отчёт по посещаемости"""
     if not REPORTLAB_AVAILABLE:
         return Response(
@@ -410,18 +347,21 @@ def attendance_report(request):
         col_widths = [4 * cm, 4.5 * cm, 4 * cm, 4.5 * cm]
 
         # Генерация PDF
-        pdf_buffer = create_pdf_document(
+        pdf = create_pdf_document(
             title="ОТЧЁТ ПО ПОСЕЩАЕМОСТИ",
             subtitle=f"Дата формирования: {date.today().strftime('%d.%m.%Y')}",
-            summary_items=summary_items,
+            summary=summary_items,
             headers=headers,
-            data_rows=data_rows,
+            rows=data_rows,
             col_widths=col_widths
         )
 
-        response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
-        response['Content-Disposition'] = 'attachment; filename="attendance_report.pdf"'
-        return response
+        return FileResponse(
+            pdf,
+            as_attachment=True,
+            filename='revenue_report.pdf',
+            content_type='application/pdf'
+        )
 
     except Exception as e:
         import traceback
@@ -433,9 +373,12 @@ def attendance_report(request):
         )
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
+
 def trainer_performance_report(request):
+    try:
+        user = jwt_authenticate(request)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=401)
     """Отчёт по эффективности тренеров"""
     if not REPORTLAB_AVAILABLE:
         return Response(
@@ -474,18 +417,21 @@ def trainer_performance_report(request):
         col_widths = [5 * cm, 7 * cm, 4 * cm]
 
         # Генерация PDF
-        pdf_buffer = create_pdf_document(
+        pdf = create_pdf_document(
             title="ЭФФЕКТИВНОСТЬ ТРЕНЕРОВ",
             subtitle=f"Дата формирования: {date.today().strftime('%d.%m.%Y')}",
-            summary_items=summary_items,
+            summary=summary_items,
             headers=headers,
-            data_rows=data_rows,
+            rows=data_rows,
             col_widths=col_widths
         )
 
-        response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
-        response['Content-Disposition'] = 'attachment; filename="trainer_performance.pdf"'
-        return response
+        return FileResponse(
+            pdf,
+            as_attachment=True,
+            filename='revenue_report.pdf',
+            content_type='application/pdf'
+        )
 
     except Exception as e:
         import traceback
@@ -497,9 +443,12 @@ def trainer_performance_report(request):
         )
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
+
 def expiring_memberships_report(request):
+    try:
+        user = jwt_authenticate(request)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=401)
     """Отчёт по истекающим абонементам"""
     if not REPORTLAB_AVAILABLE:
         return Response(
@@ -547,18 +496,21 @@ def expiring_memberships_report(request):
         col_widths = [5 * cm, 5 * cm, 3 * cm, 3 * cm]
 
         # Генерация PDF
-        pdf_buffer = create_pdf_document(
+        pdf = create_pdf_document(
             title="ИСТЕКАЮЩИЕ АБОНЕМЕНТЫ",
             subtitle=f"Дата формирования: {date.today().strftime('%d.%m.%Y')} • Проверка на {soon.strftime('%d.%m.%Y')}",
-            summary_items=summary_items,
+            summary=summary_items,
             headers=headers,
-            data_rows=data_rows,
+            rows=data_rows,
             col_widths=col_widths
         )
 
-        response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
-        response['Content-Disposition'] = 'attachment; filename="expiring_memberships.pdf"'
-        return response
+        return FileResponse(
+            pdf,
+            as_attachment=True,
+            filename='revenue_report.pdf',
+            content_type='application/pdf'
+        )
 
     except Exception as e:
         import traceback

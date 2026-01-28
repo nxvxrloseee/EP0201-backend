@@ -197,7 +197,7 @@ STATICFILES_DIRS = [
 ]
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-FONTS_DIR = BASE_DIR / 'static' / 'fonts'
+FONTS_DIR = BASE_DIR / 'static' / 'fonts' / 'dejavu-fonts-ttf-2.37' / 'ttf'
 
 # Logging
 LOGGING = {

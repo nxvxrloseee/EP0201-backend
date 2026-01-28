@@ -39,9 +39,9 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'dbbackup',
+    'corsheaders',
     'rest_framework',
     'django_extensions',
-    'corsheaders',
     'api',
 
 ]
@@ -88,6 +88,8 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
+CORS_EXPOSE_HEADERS = ['Content-Disposition']
+
 CSRF_TRUSTED_ORIGINS = ["https://localhost:5173", "http://localhost:5173", "https://127.0.0.1:5173", "http://127.0.0.1:5173"]
 
 ROOT_URLCONF = 'backend.urls'
@@ -130,7 +132,7 @@ SIMPLE_JWT = {
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql_psycopg2',
+        'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'ep0201_p',
         'USER': 'python',
         'PASSWORD': 'python',

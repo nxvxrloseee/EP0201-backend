@@ -13,7 +13,7 @@ class User(AbstractUser):
     trainer = models.OneToOneField('Trainer', on_delete=models.SET_NULL, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     def save(self, *args, **kwargs):
-        if self.pk is None or not self.password.statswith('pbkdf2_'):
+        if self.pk is None or not self.password.startswith('pbkdf2_'):
             self.set_password(self.password)
             super().save(*args, **kwargs)
 

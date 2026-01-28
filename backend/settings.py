@@ -86,9 +86,10 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'range',
 ]
 
-CORS_EXPOSE_HEADERS = ['Content-Disposition']
+CORS_EXPOSE_HEADERS = ['Content-Disposition', 'Content-Length', 'Content-Type']
 
 CSRF_TRUSTED_ORIGINS = ["https://localhost:5173", "http://localhost:5173", "https://127.0.0.1:5173", "http://127.0.0.1:5173"]
 
@@ -194,3 +195,28 @@ AUTH_USER_MODEL = 'api.User'
 STATICFILES_DIRS = [
     BASE_DIR / 'static',
 ]
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+FONTS_DIR = BASE_DIR / 'static' / 'fonts'
+
+# Logging
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'WARNING',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+    },
+}

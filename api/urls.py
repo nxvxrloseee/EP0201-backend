@@ -7,9 +7,11 @@ router = DefaultRouter()
 router.register(r'trainers', TrainerListViewSet)
 router.register(r'clients', ClientViewSet)
 router.register(r'memberships', MembershipViewSet)
+router.register(r'membership-types', MembershipTypeViewSet)
 router.register(r'trainings', TrainingViewSet)
 router.register(r'payments', PaymentViewSet)
 router.register(r'halls', HallViewSet)
+router.register(r'attendance', AttendanceViewSet)
 
 urlpatterns = [
     path('auth/login/', MTokenObtainPairView.as_view(), name='token_obtain_pair'),

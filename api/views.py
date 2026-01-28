@@ -88,6 +88,13 @@ class MembershipViewSet(BaseViewSet):
     queryset = Membership.objects.all()
     serializer_class = MembershipSerializer
 
+class MembershipTypeViewSet(BaseViewSet):
+    queryset = MembershipType.objects.all()
+    serializer_class = MembershipTypeSerializer
+
+class AttendanceViewSet(BaseViewSet):
+    queryset = Attendance.objects.all()
+    serializer_class = AttendanceSerializer
 
 class TrainingViewSet(BaseViewSet):
     queryset = Training.objects.all()
@@ -194,12 +201,23 @@ def create_summary_box(elements, summary_items, styles):
 
     table = Table(data, colWidths=[8 * cm, 8 * cm])
     table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#ecf0f1')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#34495e')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+
+        # header
+        ('FONTNAME', (0, 0), (-1, 0), FONT_NAME_BOLD),
+
+        # тело таблицы ← ВАЖНО
+        ('FONTNAME', (0, 1), (-1, -1), FONT_NAME),
+
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
+
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#bdc3c7')),
-        ('LEFTPADDING', (0, 0), (-1, -1), 15),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 15),
-        ('TOPPADDING', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [
+            colors.white, colors.HexColor('#f8f9fa')
+        ]),
     ]))
 
     elements.append(table)
@@ -211,13 +229,23 @@ def create_data_table(headers, rows, col_widths):
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#34495e')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+
+        # header
         ('FONTNAME', (0, 0), (-1, 0), FONT_NAME_BOLD),
+
+        # тело таблицы ← ВАЖНО
+        ('FONTNAME', (0, 1), (-1, -1), FONT_NAME),
+
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
         ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
+
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#bdc3c7')),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [
             colors.white, colors.HexColor('#f8f9fa')
         ]),
     ]))
+
     return table
 
 

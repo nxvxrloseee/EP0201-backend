@@ -1,226 +1,52 @@
-
 from io import BytesIO
+from datetime import date, timedelta
 from django.http import HttpResponse
+from django.conf import settings
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, permission_classes, api_view
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-# Импорт WeasyPrint
+# Импорт ReportLab
 try:
-    import weasyprint
-    from weasyprint.text.fonts import FontConfiguration
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm, mm
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.lib import colors
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.platypus.flowables import HRFlowable
+    import os
+
+    REPORTLAB_AVAILABLE = True
+
+    # Регистрация шрифтов DejaVu для поддержки кириллицы
+    try:
+        fonts_dir = os.path.join(settings.BASE_DIR, 'static', 'fonts')
+        if os.path.exists(fonts_dir):
+            pdfmetrics.registerFont(TTFont('DejaVuSans', os.path.join(fonts_dir, 'DejaVuSans.ttf')))
+            pdfmetrics.registerFont(TTFont('DejaVuSans-Bold', os.path.join(fonts_dir, 'DejaVuSans-Bold.ttf')))
+            pdfmetrics.registerFont(TTFont('DejaVuSans-Oblique', os.path.join(fonts_dir, 'DejaVuSans-Oblique.ttf')))
+            FONT_NAME = 'DejaVuSans'
+            FONT_NAME_BOLD = 'DejaVuSans-Bold'
+        else:
+            FONT_NAME = 'Helvetica'
+            FONT_NAME_BOLD = 'Helvetica-Bold'
+    except Exception as e:
+        print(f"Ошибка загрузки шрифтов: {e}")
+        FONT_NAME = 'Helvetica'
+        FONT_NAME_BOLD = 'Helvetica-Bold'
+
 except ImportError:
-    weasyprint = None
+    REPORTLAB_AVAILABLE = False
+    FONT_NAME = 'Helvetica'
+    FONT_NAME_BOLD = 'Helvetica-Bold'
 
 from .serializers import *
 from .permissions import IsStaffOrReadOnly
-
-# Шаблон HTML для отчетов
-REPORT_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <style>
-        @page {
-            size: A4;
-            margin: 1.5cm;
-            @bottom-center {
-                content: "Отчёт сформирован автоматически в АМИС «Фитнес-Менеджер». Конфиденциально.";
-                font-family: 'DejaVu-Italic', sans-serif;
-                font-size: 8pt;
-                color: #7f8c8d;
-            }
-        }
-        @font-face {
-            font-family: 'DejaVu';
-            src: url('file://{{ font_path }}/DejaVuSans.ttf');
-        }
-        @font-face {
-            font-family: 'DejaVu-Bold';
-            src: url('file://{{ font_path }}/DejaVuSans-Bold.ttf');
-        }
-        @font-face {
-            font-family: 'DejaVu-Italic';
-            src: url('file://{{ font_path }}/DejaVuSans-Oblique.ttf');
-        }
-
-        body {
-            font-family: 'DejaVu', sans-serif;
-            color: #2c3e50;
-            font-size: 10pt;
-        }
-
-        /* Заголовок */
-        .header {
-            background-color: #2c5f7f;
-            color: white;
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 25px;
-            position: relative;
-        }
-        .header h1 {
-            font-family: 'DejaVu-Bold';
-            font-size: 16pt;
-            margin: 0 0 5px 0;
-            text-transform: uppercase;
-        }
-        .header .subtitle {
-            color: #d0e8f5;
-            font-size: 10pt;
-        }
-        .header .meta {
-            margin-top: 15px;
-            font-size: 8pt;
-            display: flex;
-            justify-content: space-between;
-        }
-
-        /* Карточки статистики */
-        .stats-grid {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            margin-bottom: 25px;
-        }
-        .stat-card {
-            background-color: #f8f9fa;
-            border: 1px solid #e0e0e0;
-            border-radius: 6px;
-            padding: 15px;
-            width: 23%;
-            text-align: center;
-            box-sizing: border-box;
-        }
-        .stat-value {
-            font-family: 'DejaVu-Bold';
-            font-size: 18pt;
-            margin-bottom: 5px;
-        }
-        .stat-label {
-            font-size: 9pt;
-            color: #7f8c8d;
-        }
-
-        /* Секции */
-        .section-title {
-            font-family: 'DejaVu-Bold';
-            font-size: 12pt;
-            color: {{ section_color|default:'#2c5f7f' }};
-            border-bottom: 2px solid {{ section_color|default:'#2c5f7f' }};
-            padding-bottom: 5px;
-            margin-top: 30px;
-            margin-bottom: 15px;
-        }
-
-        /* Таблицы */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 20px;
-        }
-        th {
-            background-color: #34495e;
-            color: white;
-            font-family: 'DejaVu-Bold';
-            font-size: 9pt;
-            padding: 10px;
-            text-align: left;
-        }
-        td {
-            padding: 8px 10px;
-            border-bottom: 1px solid #dee2e6;
-            font-size: 9pt;
-        }
-        tr:nth-child(even) {
-            background-color: #f8f9fa;
-        }
-        tr.total-row td {
-            background-color: #e8f4f8;
-            font-family: 'DejaVu-Bold';
-            border-top: 2px solid #2c5f7f;
-        }
-
-        /* Рекомендации */
-        .recommendations {
-            background-color: #f0f8ff;
-            border-left: 4px solid #3498db;
-            padding: 15px;
-            font-size: 9pt;
-            margin-top: 10px;
-        }
-        .recommendations ul {
-            margin: 0;
-            padding-left: 20px;
-        }
-        .recommendations li {
-            margin-bottom: 5px;
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>{{ title }}</h1>
-        <div class="subtitle">{{ subtitle }}</div>
-        <div class="meta">
-            <span>{{ period_label }}</span>
-            <span>{{ generated_by }}</span>
-        </div>
-    </div>
-
-    {% if stats %}
-    <div class="stats-grid">
-        {% for stat in stats %}
-        <div class="stat-card">
-            <div class="stat-value" style="color: {{ stat.color|default:'#2c3e50' }}">{{ stat.value }}</div>
-            <div class="stat-label">{{ stat.label }}</div>
-        </div>
-        {% endfor %}
-    </div>
-    {% endif %}
-
-    {% for section in content_sections %}
-        {% if section.title %}
-            <div class="section-title" style="color: {{ section.color|default:'#2c5f7f' }}; border-color: {{ section.color|default:'#2c5f7f' }};">
-                {{ section.title }}
-            </div>
-        {% endif %}
-
-        {% if section.type == 'table' %}
-        <table>
-            <thead>
-                <tr>
-                    {% for header in section.headers %}
-                    <th>{{ header }}</th>
-                    {% endfor %}
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in section.rows %}
-                <tr class="{% if section.has_total and forloop.last %}total-row{% endif %}">
-                    {% for cell in row %}
-                    <td>{{ cell }}</td>
-                    {% endfor %}
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% elif section.type == 'list' %}
-        <div class="recommendations">
-            <ul>
-                {% for item in section.items %}
-                <li>{{ item }}</li>
-                {% endfor %}
-            </ul>
-        </div>
-        {% endif %}
-    {% endfor %}
-</body>
-</html>
-"""
 
 
 class BaseViewSet(viewsets.ModelViewSet):
@@ -277,272 +103,468 @@ class PaymentViewSet(BaseViewSet):
     serializer_class = PaymentSerializer
 
 
-font_config = FontConfiguration()
+def get_custom_styles():
+    """Создание кастомных стилей для PDF"""
+    styles = getSampleStyleSheet()
+
+    # Стиль для главного заголовка
+    styles.add(ParagraphStyle(
+        name='CustomTitle',
+        parent=styles['Heading1'],
+        fontName=FONT_NAME_BOLD,
+        fontSize=24,
+        textColor=colors.HexColor('#2c3e50'),
+        spaceAfter=10,
+        alignment=TA_CENTER,
+        leading=28
+    ))
+
+    # Стиль для подзаголовка
+    styles.add(ParagraphStyle(
+        name='CustomSubtitle',
+        parent=styles['Normal'],
+        fontName=FONT_NAME,
+        fontSize=10,
+        textColor=colors.HexColor('#7f8c8d'),
+        spaceAfter=20,
+        alignment=TA_CENTER
+    ))
+
+    # Стиль для секций
+    styles.add(ParagraphStyle(
+        name='SectionHeader',
+        parent=styles['Heading2'],
+        fontName=FONT_NAME_BOLD,
+        fontSize=14,
+        textColor=colors.HexColor('#27ae60'),
+        spaceBefore=15,
+        spaceAfter=10,
+        leading=16
+    ))
+
+    # Стиль для summary блока
+    styles.add(ParagraphStyle(
+        name='SummaryText',
+        parent=styles['Normal'],
+        fontName=FONT_NAME,
+        fontSize=11,
+        textColor=colors.HexColor('#2c3e50'),
+        spaceBefore=5,
+        spaceAfter=5,
+        leading=14
+    ))
+
+    # Стиль для обычного текста
+    styles.add(ParagraphStyle(
+        name='CustomNormal',
+        parent=styles['Normal'],
+        fontName=FONT_NAME,
+        fontSize=10,
+        leading=12
+    ))
+
+    return styles
 
 
-def get_base_css():
-    """Базовые стили для PDF"""
-    return weasyprint.CSS(string='''
-        @page { margin: 2cm; }
-        body { font-family: DejaVu Sans, sans-serif; font-size: 12pt; }
-        h1 { color: #2c3e50; border-bottom: 2px solid #27ae60; padding-bottom: 10px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th { background-color: #34495e; color: white; padding: 10px; text-align: left; }
-        td { padding: 8px; border-bottom: 1px solid #ddd; }
-        tr:nth-child(even) { background-color: #f9f9f9; }
-    ''', font_config=font_config)
+def create_report_header(elements, title, subtitle, styles):
+    """Создание заголовка отчета"""
+    # Заголовок
+    elements.append(Paragraph(title, styles['CustomTitle']))
+
+    # Подзаголовок с датой
+    elements.append(Paragraph(subtitle, styles['CustomSubtitle']))
+
+    # Разделительная линия
+    elements.append(HRFlowable(
+        width="100%",
+        thickness=2,
+        color=colors.HexColor('#27ae60'),
+        spaceBefore=5,
+        spaceAfter=15
+    ))
+
+
+def create_summary_box(elements, summary_items, styles):
+    """Создание блока с итоговой информацией"""
+    # Создаем таблицу для summary
+    summary_data = []
+    for item in summary_items:
+        summary_data.append([
+            Paragraph(f"<b>{item['label']}:</b>", styles['SummaryText']),
+            Paragraph(str(item['value']), styles['SummaryText'])
+        ])
+
+    summary_table = Table(summary_data, colWidths=[8 * cm, 8 * cm])
+    summary_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#ecf0f1')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 15),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 15),
+        ('TOPPADDING', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#bdc3c7'))
+    ]))
+
+    elements.append(summary_table)
+    elements.append(Spacer(1, 0.5 * cm))
+
+
+def create_data_table(headers, data_rows, col_widths=None):
+    """Создание таблицы с данными"""
+    # Формируем данные таблицы
+    table_data = [headers] + data_rows
+
+    # Создаем таблицу
+    if col_widths:
+        table = Table(table_data, colWidths=col_widths, repeatRows=1)
+    else:
+        table = Table(table_data, repeatRows=1)
+
+    # Применяем стили
+    table.setStyle(TableStyle([
+        # Заголовок
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#34495e')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), FONT_NAME_BOLD),
+        ('FONTSIZE', (0, 0), (-1, 0), 11),
+        ('TOPPADDING', (0, 0), (-1, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+
+        # Содержимое
+        ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+        ('FONTNAME', (0, 1), (-1, -1), FONT_NAME),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 1), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+
+        # Чередующиеся строки
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
+
+        # Границы
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#bdc3c7')),
+        ('LINEBELOW', (0, 0), (-1, 0), 2, colors.HexColor('#34495e')),
+    ]))
+
+    return table
+
+
+def create_pdf_document(title, subtitle, summary_items, headers, data_rows, col_widths=None):
+    """
+    Универсальная функция для создания PDF отчетов
+    """
+    if not REPORTLAB_AVAILABLE:
+        raise ImportError("ReportLab не установлен")
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=1.5 * cm,
+        leftMargin=1.5 * cm,
+        topMargin=2 * cm,
+        bottomMargin=2 * cm,
+        title=title
+    )
+
+    elements = []
+    styles = get_custom_styles()
+
+    # Заголовок отчета
+    create_report_header(elements, title, subtitle, styles)
+
+    # Блок с итоговой информацией
+    if summary_items:
+        create_summary_box(elements, summary_items, styles)
+
+    # Секция с данными
+    elements.append(Paragraph("Детализация", styles['SectionHeader']))
+    elements.append(Spacer(1, 0.3 * cm))
+
+    # Таблица с данными
+    table = create_data_table(headers, data_rows, col_widths)
+    elements.append(table)
+
+    # Футер
+    elements.append(Spacer(1, 1 * cm))
+    footer_style = ParagraphStyle(
+        'Footer',
+        parent=styles['CustomNormal'],
+        fontSize=8,
+        textColor=colors.HexColor('#95a5a6'),
+        alignment=TA_CENTER
+    )
+    elements.append(Paragraph(
+        f"Отчёт сформирован автоматически • Система управления фитнес-клубом • {date.today().strftime('%d.%m.%Y')}",
+        footer_style
+    ))
+
+    # Генерируем PDF
+    doc.build(elements)
+    buffer.seek(0)
+
+    return buffer
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def revenue_report(request):
     """Финансовый отчёт"""
-    from .models import Payment
+    if not REPORTLAB_AVAILABLE:
+        return Response(
+            {'error': 'PDF библиотека не установлена. Установите: pip install reportlab'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
-    payments = Payment.objects.select_related('client').all()
+    try:
+        from .models import Payment
 
-    total = sum(float(p.amount) for p in payments)
+        payments = Payment.objects.select_related('client').order_by('-payment_date')
+        total = sum(float(p.amount) for p in payments)
 
-    html_content = f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Финансовый отчёт</title>
-    </head>
-    <body>
-        <h1>Финансовый отчёт</h1>
-        <p><strong>Общая выручка:</strong> {total:,.2f} ₽</p>
+        # Summary данные
+        summary_items = [
+            {'label': 'Общая выручка', 'value': f"{total:,.2f} ₽"},
+            {'label': 'Всего платежей', 'value': payments.count()}
+        ]
 
-        <table>
-            <thead>
-                <tr>
-                    <th>Дата</th>
-                    <th>Клиент</th>
-                    <th>Сумма</th>
-                    <th>Тип оплаты</th>
-                </tr>
-            </thead>
-            <tbody>
-    '''
+        # Подготовка данных для таблицы
+        headers = ['Дата', 'Клиент', 'Сумма', 'Тип оплаты']
+        data_rows = []
 
-    for p in payments:
-        html_content += f'''
-                <tr>
-                    <td>{p.payment_date.strftime('%d.%m.%Y')}</td>
-                    <td>{p.client.surname} {p.client.name}</td>
-                    <td>{float(p.amount):,.2f} ₽</td>
-                    <td>{p.payment_type}</td>
-                </tr>
-        '''
+        for p in payments:
+            data_rows.append([
+                p.payment_date.strftime('%d.%m.%Y %H:%M'),
+                f"{p.client.surname} {p.client.name}",
+                f"{float(p.amount):,.2f} ₽",
+                p.payment_type
+            ])
 
-    html_content += '''
-            </tbody>
-        </table>
-    </body>
-    </html>
-    '''
+        # Ширина колонок
+        col_widths = [4 * cm, 5 * cm, 3 * cm, 4 * cm]
 
-    # Генерация PDF
-    pdf_file = BytesIO()
-    weasyprint.HTML(string=html_content).write_pdf(
-        pdf_file,
-        stylesheets=[get_base_css()],
-        font_config=font_config
-    )
-    pdf_file.seek(0)
+        # Генерация PDF
+        pdf_buffer = create_pdf_document(
+            title="ФИНАНСОВЫЙ ОТЧЁТ",
+            subtitle=f"Период: все время • Дата формирования: {date.today().strftime('%d.%m.%Y')}",
+            summary_items=summary_items,
+            headers=headers,
+            data_rows=data_rows,
+            col_widths=col_widths
+        )
 
-    response = HttpResponse(pdf_file.read(), content_type='application/pdf')
-    response['Content-Disposition'] = 'attachment; filename="revenue_report.pdf"'
-    return response
+        response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
+        response['Content-Disposition'] = 'attachment; filename="revenue_report.pdf"'
+        return response
+
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"Ошибка генерации PDF: {error_detail}")
+        return Response(
+            {'error': f'Ошибка генерации PDF: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def attendance_report(request):
     """Отчёт по посещаемости"""
-    from .models import Attendance, Training
+    if not REPORTLAB_AVAILABLE:
+        return Response(
+            {'error': 'PDF библиотека не установлена. Установите: pip install reportlab'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
-    attendances = Attendance.objects.select_related(
-        'client', 'training', 'training__trainer'
-    ).filter(status='Посетил')
+    try:
+        from .models import Attendance
 
-    html_content = f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Отчёт по посещаемости</title>
-    </head>
-    <body>
-        <h1>Отчёт по посещаемости</h1>
-        <p><strong>Всего посещений:</strong> {attendances.count()}</p>
+        attendances = Attendance.objects.select_related(
+            'client', 'training', 'training__trainer', 'training__training_type'
+        ).filter(status='Посетил').order_by('-training__date_time')
 
-        <table>
-            <thead>
-                <tr>
-                    <th>Дата</th>
-                    <th>Клиент</th>
-                    <th>Тренировка</th>
-                    <th>Тренер</th>
-                </tr>
-            </thead>
-            <tbody>
-    '''
+        # Summary данные
+        summary_items = [
+            {'label': 'Всего посещений', 'value': attendances.count()},
+            {'label': 'Период', 'value': 'Все время'}
+        ]
 
-    for a in attendances:
-        html_content += f'''
-                <tr>
-                    <td>{a.training.date_time.strftime('%d.%m.%Y %H:%M')}</td>
-                    <td>{a.client.surname} {a.client.name}</td>
-                    <td>{a.training.training_type.name}</td>
-                    <td>{a.training.trainer.surname} {a.training.trainer.name}</td>
-                </tr>
-        '''
+        # Подготовка данных для таблицы
+        headers = ['Дата', 'Клиент', 'Тренировка', 'Тренер']
+        data_rows = []
 
-    html_content += '''
-            </tbody>
-        </table>
-    </body>
-    </html>
-    '''
+        for a in attendances:
+            data_rows.append([
+                a.training.date_time.strftime('%d.%m.%Y %H:%M'),
+                f"{a.client.surname} {a.client.name}",
+                a.training.training_type.name,
+                f"{a.training.trainer.surname} {a.training.trainer.name}"
+            ])
 
-    pdf_file = BytesIO()
-    weasyprint.HTML(string=html_content).write_pdf(
-        pdf_file,
-        stylesheets=[get_base_css()],
-        font_config=font_config
-    )
-    pdf_file.seek(0)
+        # Ширина колонок
+        col_widths = [4 * cm, 4.5 * cm, 4 * cm, 4.5 * cm]
 
-    response = HttpResponse(pdf_file.read(), content_type='application/pdf')
-    response['Content-Disposition'] = 'attachment; filename="attendance_report.pdf"'
-    return response
+        # Генерация PDF
+        pdf_buffer = create_pdf_document(
+            title="ОТЧЁТ ПО ПОСЕЩАЕМОСТИ",
+            subtitle=f"Дата формирования: {date.today().strftime('%d.%m.%Y')}",
+            summary_items=summary_items,
+            headers=headers,
+            data_rows=data_rows,
+            col_widths=col_widths
+        )
+
+        response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
+        response['Content-Disposition'] = 'attachment; filename="attendance_report.pdf"'
+        return response
+
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"Ошибка генерации PDF: {error_detail}")
+        return Response(
+            {'error': f'Ошибка генерации PDF: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def trainer_performance_report(request):
     """Отчёт по эффективности тренеров"""
-    from .models import Trainer, Training
-    from django.db.models import Count
+    if not REPORTLAB_AVAILABLE:
+        return Response(
+            {'error': 'PDF библиотека не установлена. Установите: pip install reportlab'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
-    trainers = Trainer.objects.annotate(
-        training_count=Count('training')
-    ).order_by('-training_count')
+    try:
+        from .models import Trainer
+        from django.db.models import Count
 
-    html_content = '''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Эффективность тренеров</title>
-    </head>
-    <body>
-        <h1>Эффективность тренеров</h1>
+        trainers = Trainer.objects.annotate(
+            training_count=Count('training')
+        ).order_by('-training_count')
 
-        <table>
-            <thead>
-                <tr>
-                    <th>Тренер</th>
-                    <th>Специализация</th>
-                    <th>Количество тренировок</th>
-                </tr>
-            </thead>
-            <tbody>
-    '''
+        total_trainings = sum(t.training_count for t in trainers)
 
-    for t in trainers:
-        html_content += f'''
-                <tr>
-                    <td>{t.surname} {t.name}</td>
-                    <td>{t.specialization}</td>
-                    <td>{t.training_count}</td>
-                </tr>
-        '''
+        # Summary данные
+        summary_items = [
+            {'label': 'Всего тренеров', 'value': trainers.count()},
+            {'label': 'Всего тренировок', 'value': total_trainings}
+        ]
 
-    html_content += '''
-            </tbody>
-        </table>
-    </body>
-    </html>
-    '''
+        # Подготовка данных для таблицы
+        headers = ['Тренер', 'Специализация', 'Кол-во тренировок']
+        data_rows = []
 
-    pdf_file = BytesIO()
-    weasyprint.HTML(string=html_content).write_pdf(
-        pdf_file,
-        stylesheets=[get_base_css()],
-        font_config=font_config
-    )
-    pdf_file.seek(0)
+        for t in trainers:
+            data_rows.append([
+                f"{t.surname} {t.name}",
+                t.specialization,
+                str(t.training_count)
+            ])
 
-    response = HttpResponse(pdf_file.read(), content_type='application/pdf')
-    response['Content-Disposition'] = 'attachment; filename="trainer_performance.pdf"'
-    return response
+        # Ширина колонок
+        col_widths = [5 * cm, 7 * cm, 4 * cm]
+
+        # Генерация PDF
+        pdf_buffer = create_pdf_document(
+            title="ЭФФЕКТИВНОСТЬ ТРЕНЕРОВ",
+            subtitle=f"Дата формирования: {date.today().strftime('%d.%m.%Y')}",
+            summary_items=summary_items,
+            headers=headers,
+            data_rows=data_rows,
+            col_widths=col_widths
+        )
+
+        response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
+        response['Content-Disposition'] = 'attachment; filename="trainer_performance.pdf"'
+        return response
+
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"Ошибка генерации PDF: {error_detail}")
+        return Response(
+            {'error': f'Ошибка генерации PDF: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def expiring_memberships_report(request):
     """Отчёт по истекающим абонементам"""
-    from .models import Membership
-    from datetime import date, timedelta
+    if not REPORTLAB_AVAILABLE:
+        return Response(
+            {'error': 'PDF библиотека не установлена. Установите: pip install reportlab'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
-    soon = date.today() + timedelta(days=7)
-    expiring = Membership.objects.filter(
-        end_date__lte=soon,
-        status='Активен'
-    ).select_related('client', 'type')
+    try:
+        from .models import Membership
 
-    html_content = f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Истекающие абонементы</title>
-    </head>
-    <body>
-        <h1>Истекающие абонементы</h1>
-        <p><strong>Критических абонементов:</strong> {expiring.count()}</p>
+        soon = date.today() + timedelta(days=7)
+        expiring = Membership.objects.filter(
+            end_date__lte=soon,
+            status='Активен'
+        ).select_related('client', 'type').order_by('end_date')
 
-        <table>
-            <thead>
-                <tr>
-                    <th>Клиент</th>
-                    <th>Тип абонемента</th>
-                    <th>Дата окончания</th>
-                    <th>Осталось дней</th>
-                </tr>
-            </thead>
-            <tbody>
-    '''
+        # Summary данные
+        summary_items = [
+            {'label': 'Критических абонементов', 'value': expiring.count()},
+            {'label': 'Период проверки', 'value': '7 дней'}
+        ]
 
-    for m in expiring:
-        days_left = (m.end_date - date.today()).days
-        html_content += f'''
-                <tr>
-                    <td>{m.client.surname} {m.client.name}</td>
-                    <td>{m.type.name}</td>
-                    <td>{m.end_date.strftime('%d.%m.%Y')}</td>
-                    <td>{days_left}</td>
-                </tr>
-        '''
+        # Подготовка данных для таблицы
+        headers = ['Клиент', 'Тип абонемента', 'Дата окончания', 'Осталось дней']
+        data_rows = []
 
-    html_content += '''
-            </tbody>
-        </table>
-    </body>
-    </html>
-    '''
+        for m in expiring:
+            days_left = (m.end_date - date.today()).days
+            # Цвет предупреждения
+            if days_left <= 0:
+                days_text = f"ИСТЁК"
+            elif days_left <= 3:
+                days_text = f"{days_left} (срочно!)"
+            else:
+                days_text = str(days_left)
 
-    pdf_file = BytesIO()
-    weasyprint.HTML(string=html_content).write_pdf(
-        pdf_file,
-        stylesheets=[get_base_css()],
-        font_config=font_config
-    )
-    pdf_file.seek(0)
+            data_rows.append([
+                f"{m.client.surname} {m.client.name}",
+                m.type.name,
+                m.end_date.strftime('%d.%m.%Y'),
+                days_text
+            ])
 
-    response = HttpResponse(pdf_file.read(), content_type='application/pdf')
-    response['Content-Disposition'] = 'attachment; filename="expiring_memberships.pdf"'
-    return response
+        # Ширина колонок
+        col_widths = [5 * cm, 5 * cm, 3 * cm, 3 * cm]
+
+        # Генерация PDF
+        pdf_buffer = create_pdf_document(
+            title="ИСТЕКАЮЩИЕ АБОНЕМЕНТЫ",
+            subtitle=f"Дата формирования: {date.today().strftime('%d.%m.%Y')} • Проверка на {soon.strftime('%d.%m.%Y')}",
+            summary_items=summary_items,
+            headers=headers,
+            data_rows=data_rows,
+            col_widths=col_widths
+        )
+
+        response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
+        response['Content-Disposition'] = 'attachment; filename="expiring_memberships.pdf"'
+        return response
+
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"Ошибка генерации PDF: {error_detail}")
+        return Response(
+            {'error': f'Ошибка генерации PDF: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

@@ -82,7 +82,7 @@ class Attendance(models.Model):
     check_in_time = models.DateTimeField(null=True, blank=True)
 
 class Payment(models.Model):
-    TYPE_CHOICES = [('Наличные', 'Наличные'), ('Карта', 'Карта'), ('Перевод', 'Перевод')]
+    TYPE_CHOICES = [('Cash', 'Cash'), ('Card', 'Card'), ('Transfer', 'Transfer')]
     client = models.ForeignKey(Client, on_delete=models.CASCADE)
     membership = models.ForeignKey(Membership, on_delete=models.SET_NULL, null=True)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
